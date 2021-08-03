@@ -7,9 +7,10 @@
 #include <iostream>
 #include <string>
 
+using namespace std;
 
-MODULEENTRY32 ModuleEntry1;
-DWORD GetModuleBase(DWORD ProcessId, const wchar_t* ModuleName)
+
+DWORD GetModuleBase(DWORD ProcessId, const wchar_t* ModuleName, PMODULEENTRY32 ModuleEntry1)
 {
  
     MODULEENTRY32 ModuleEntry = { 0 };
@@ -28,7 +29,7 @@ DWORD GetModuleBase(DWORD ProcessId, const wchar_t* ModuleName)
         if (!wcscmp(ModuleEntry.szModule, ModuleName)) {
           
             CloseHandle(SnapShot);
-            ModuleEntry1 = ModuleEntry;
+            *ModuleEntry1 = ModuleEntry;
             return (DWORD)ModuleEntry.modBaseAddr;
 
         }
@@ -42,33 +43,19 @@ DWORD GetModuleBase(DWORD ProcessId, const wchar_t* ModuleName)
 }
 
 
-void dump_user_module(DWORD process_id, const wchar_t* module)
+void dump_user_module(DWORD process_id, const char* name,  DWORD_PTR StartAddress, DWORD Size)
 {
+
     HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, process_id);
     if (!hProc)
     {
         printf("[-] Invalid PID\n\n");
         return;
     }
-   
-    if (!GetModuleBase(process_id, module))
-    {
-        printf("[-] Falha ao encontrar modulo ou processo\n");
-        return;
-    }
-
-    MODULEENTRY32 module_info = ModuleEntry1; 
-
-    printf("[+] Module Base: %X \n", (DWORD)module_info.modBaseAddr);
-    printf("[+] Module Size: %X \n", (DWORD)module_info.dwSize);
-    printf("[+] Module th32ModuleID: %X \n", (DWORD)module_info.th32ModuleID);
-    printf("[+] Module th32ProcessID: %X \n", (DWORD)module_info.th32ProcessID);
-    printf("[+] Module modBaseSize: %X \n", (DWORD)module_info.modBaseSize);
-    //printf("[+] Module Size: %X \n", (DWORD)module_info.dwSize);
 
     // Alocar um buffer suficientemente grande para o módulo
     //
-    auto buf = new char[module_info.modBaseSize];
+    auto buf = new char[StartAddress];
 
     if (!buf)
         return;
@@ -76,7 +63,7 @@ void dump_user_module(DWORD process_id, const wchar_t* module)
     // Copiar o módulo da memória para o nosso buffer recém-alocado
     //
     SIZE_T bytes_read = 0;
-    ReadProcessMemory(hProc, (PVOID)module_info.modBaseAddr, buf, module_info.modBaseSize, &bytes_read);
+    ReadProcessMemory(hProc, (PVOID)StartAddress, buf, Size, &bytes_read);
 
     if (!bytes_read)
     {
@@ -109,7 +96,7 @@ void dump_user_module(DWORD process_id, const wchar_t* module)
 
         // Arrumar o image base para a base do módulo que será dumpado
         //
-        pimage_nt_headers->OptionalHeader.ImageBase = (DWORD)module_info.modBaseAddr;
+        pimage_nt_headers->OptionalHeader.ImageBase = (DWORD_PTR)StartAddress;
     }
 
     // Este é um PE 32. Utilizar a versão em 32 bits dos nt headers
@@ -130,7 +117,7 @@ void dump_user_module(DWORD process_id, const wchar_t* module)
 
         // Arrumar o image base para a base do módulo que será dumpado
         //
-        pimage_nt_headers32->OptionalHeader.ImageBase = (DWORD)(module_info.modBaseAddr);
+        pimage_nt_headers32->OptionalHeader.ImageBase = (DWORD_PTR)(StartAddress);
     }
 
     // Não suportado
@@ -143,50 +130,76 @@ void dump_user_module(DWORD process_id, const wchar_t* module)
 
     // Montar o nome do módulo dumpado. Exemplo: "dump_kernel32.dll"
     //
-    wchar_t bufName[MAX_PATH] = { 0 };
-    wcscpy_s(bufName, L"dump_");
-    wcscat_s(bufName, module);
+    char bufName[MAX_PATH] = { 0 };
+    strcpy(bufName, "dump_");
+    strcat(bufName, name);
+    strcat(bufName, ".dll");
 
     // Criar o arquivo no diretório atual (você pode mudar para outro diretório se quiser)
     //
-    HANDLE hFile = CreateFileW(bufName, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    printf("[+] Handle CreateFileW criada = %X\n", (DWORD)hFile);
+    HANDLE hFile = CreateFileA(bufName, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);  
 
-    if (hFile != INVALID_HANDLE_VALUE)
+    if (hFile == INVALID_HANDLE_VALUE)
     {
-        // Escrever os conteúdos do buffer para o arquivo
-        //
-
-
-        DWORD Ip1, Ip2;
-        WriteFile(hFile, buf, (DWORD)bytes_read, &Ip1, nullptr);
-
-        // Fechar o handle aberto para o arquivo. Por mais que o Windows garante que não terão leak de recursos após o encerramento do processo, é uma boa prática liberar tudo
-        //
-        CloseHandle(hFile);
-        CloseHandle(hProc);
-        printf("[+] Modulo dumpado com sucesso...\n\n ");
-
+        printf("[-] falha ao criar handle\n");
+        return;
     }
 
-    // Liberar o buffer
-    //
+    DWORD Ip1, Ip2;
+    WriteFile(hFile, buf, (DWORD_PTR)bytes_read, &Ip1, nullptr);
+        
+    CloseHandle(hFile);
+    CloseHandle(hProc);
+    printf("[+] Modulo dumpado com sucesso...\n\n ");    
+
+   
     delete[] buf;
 }
 
 int main()
 {
     char sPID[99], Name[99];
+    int modo;
 
 
     printf("[+] Digito o PID(dec) do processo: ");
     scanf("%s", sPID);
-    printf("[+] Digito o modulo que deseja: ");
-    scanf("%ws", Name);
 
     int PID = atoi(sPID);
+    
+    printf("[+] 1 = modulo || 2 = memoria \n");
+    scanf("%i", &modo);
+    if (modo == 1)
+    {
+        //Module
+        printf("[+] Digito o modulo que deseja: ");
+        scanf("%ws", Name);
 
-    dump_user_module(PID, (WCHAR*)Name);
+       /* MODULEENTRY32 Modulo;
+        GetModuleBase(PID, Name)
+
+        dump_user_module(PID, Name);*/
+    }
+    else if (modo == 2)
+    {
+
+        DWORD_PTR BaseAddress = NULL;
+        DWORD Size = NULL;
+
+        //memoria
+        printf("[=] digite a baseaddress\n");
+        scanf("%p", &BaseAddress);
+
+        printf("[=] digite o Size\n");
+        scanf("%X", &Size);
+
+        dump_user_module(PID, Name, BaseAddress,Size);
+    
+    }
+
+
+    
+   
 
     printf("Obrigado iPower,lucas,GuidedHacking e todos outros que ajudaram\n\n");
     printf("Deseja dumpar outro modulo?(1/0): ");
