@@ -10,7 +10,7 @@
 using namespace std;
 
 
-DWORD GetModuleBase(DWORD ProcessId, const wchar_t* ModuleName, PMODULEENTRY32 ModuleEntry1)
+DWORD_PTR GetModuleBase(DWORD ProcessId, const wchar_t* ModuleName, PMODULEENTRY32 ModuleEntry1)
 {
  
     MODULEENTRY32 ModuleEntry = { 0 };
@@ -45,7 +45,7 @@ DWORD GetModuleBase(DWORD ProcessId, const wchar_t* ModuleName, PMODULEENTRY32 M
 
 void dump_user_module(DWORD process_id, const char* name,  DWORD_PTR StartAddress, DWORD Size)
 {
-
+    printf("[-] Abrindo processo...\n");
     HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, process_id);
     if (!hProc)
     {
@@ -55,7 +55,7 @@ void dump_user_module(DWORD process_id, const char* name,  DWORD_PTR StartAddres
 
     // Alocar um buffer suficientemente grande para o módulo
     //
-    auto buf = new char[StartAddress];
+    auto buf = new char[Size];
 
     if (!buf)
         return;
@@ -63,6 +63,7 @@ void dump_user_module(DWORD process_id, const char* name,  DWORD_PTR StartAddres
     // Copiar o módulo da memória para o nosso buffer recém-alocado
     //
     SIZE_T bytes_read = 0;
+    printf("[-] Lendo Memoria...\n");
     ReadProcessMemory(hProc, (PVOID)StartAddress, buf, Size, &bytes_read);
 
     if (!bytes_read)
@@ -132,11 +133,13 @@ void dump_user_module(DWORD process_id, const char* name,  DWORD_PTR StartAddres
     //
     char bufName[MAX_PATH] = { 0 };
     strcpy(bufName, "dump_");
-    strcat(bufName, name);
-    strcat(bufName, ".dll");
+    strcat(bufName, name); 
 
     // Criar o arquivo no diretório atual (você pode mudar para outro diretório se quiser)
     //
+
+    printf("[-] iniciando create file\n");
+
     HANDLE hFile = CreateFileA(bufName, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);  
 
     if (hFile == INVALID_HANDLE_VALUE)
@@ -158,7 +161,9 @@ void dump_user_module(DWORD process_id, const char* name,  DWORD_PTR StartAddres
 
 int main()
 {
-    char sPID[99], Name[99];
+    char sPID[99];
+    char Name_c[99];
+    wchar_t Name_w[99];
     int modo;
 
 
@@ -169,16 +174,20 @@ int main()
     
     printf("[+] 1 = modulo || 2 = memoria \n");
     scanf("%i", &modo);
+
     if (modo == 1)
     {
         //Module
         printf("[+] Digito o modulo que deseja: ");
-        scanf("%ws", Name);
+        scanf("%ws", Name_w);
 
-       /* MODULEENTRY32 Modulo;
-        GetModuleBase(PID, Name)
+        MODULEENTRY32 Modulo;
+        GetModuleBase(PID, Name_w, &Modulo);
 
-        dump_user_module(PID, Name);*/
+        printf("Base: %p Size: %X\n", Modulo.modBaseAddr, Modulo.modBaseSize);
+        sprintf(Name_c,"%ws",Name_w);
+
+        dump_user_module(PID, Name_c, (DWORD_PTR)Modulo.modBaseAddr, Modulo.modBaseSize);
     }
     else if (modo == 2)
     {
@@ -193,7 +202,7 @@ int main()
         printf("[=] digite o Size\n");
         scanf("%X", &Size);
 
-        dump_user_module(PID, Name, BaseAddress,Size);
+        dump_user_module(PID, Name_c, BaseAddress,Size);
     
     }
 
